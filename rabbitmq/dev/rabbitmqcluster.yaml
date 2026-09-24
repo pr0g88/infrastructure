@@ -1,0 +1,33 @@
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: rabbitmq
+  namespace: pizzashop-dev
+spec:
+  replicas: 1
+  image: rabbitmq:3-management-alpine
+
+  secretBackend:
+    externalSecret:
+      name: rabbitmq-default-user-external
+
+  persistence:
+    storageClassName: standard
+    storage: 1Gi
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 800Mi
+
+  service:
+    type: ClusterIP
+
+  # Путь совпадает с path в Ingress (rabbitmq/dev/ingress.yaml) —
+  # /rabbitmq-dev, БЕЗ завершающего слэша в самой настройке.
+  rabbitmq:
+    additionalConfig: |
+      management.path_prefix = /rabbitmq-dev

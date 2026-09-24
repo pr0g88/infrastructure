@@ -1,0 +1,23 @@
+# Ingress на RabbitMQ Management UI — staging. Отдельный host
+# (rabbitmq-staging.internal) — иначе коллизия с dev, и весь Ingress
+# отклонится контроллером.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rabbitmq-ingress
+  namespace: pizzashop-staging
+  annotations:
+    nginx.org/client-max-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: rabbitmq-staging.internal
+      http:
+        paths:
+          - path: /rabbitmq-staging
+            pathType: Prefix
+            backend:
+              service:
+                name: rabbitmq
+                port:
+                  number: 15672

@@ -1,0 +1,27 @@
+# Ingress на RabbitMQ Management UI — dev. Контроллер — NGINX Inc. (nginx.org),
+# он не мёржит один host из разных namespace (выбирает победителя по
+# creationTimestamp), поэтому у каждого окружения свой уникальный host
+# (внутренний, резолвится только через Host-заголовок во внешнем nginx).
+#
+# Аннотации — nginx.org/*: community-префикс nginx.ingress.kubernetes.io/*
+# этот контроллер не читает.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rabbitmq-ingress
+  namespace: pizzashop-dev
+  annotations:
+    nginx.org/client-max-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: rabbitmq-dev.internal
+      http:
+        paths:
+          - path: /rabbitmq-dev
+            pathType: Prefix
+            backend:
+              service:
+                name: rabbitmq
+                port:
+                  number: 15672

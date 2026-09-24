@@ -1,0 +1,29 @@
+# RabbitmqCluster CR — окружение prom.
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: rabbitmq
+  namespace: pizzashop-prom
+spec:
+  replicas: 1
+
+  image: rabbitmq:3-management-alpine
+
+  secretBackend:
+    externalSecret:
+      name: rabbitmq-default-user-external
+
+  persistence:
+    storageClassName: standard
+    storage: 2Gi
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  service:
+    type: ClusterIP

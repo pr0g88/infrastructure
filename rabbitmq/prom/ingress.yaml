@@ -1,0 +1,30 @@
+# Ingress на RabbitMQ Management UI — prom.
+#
+# Аннотации — nginx.org/* (NGINX Inc.), как и в dev/staging: community-префикс
+# nginx.ingress.kubernetes.io/* этот контроллер не читает (см. коммент в
+# rabbitmq/dev/ingress.yaml).
+#
+# host ниже — единственное место в проекте, где домен остался хардкодом:
+# kubectl apply -f не подставляет CI/CD-переменные в манифест, а джоб для
+# prom ещё не подключён (см. .gitlab-ci.yml). Если включим prom — заменить
+# на envsubst/sed перед kubectl apply и увести host в переменную.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rabbitmq-ingress
+  namespace: pizzashop-prom
+  annotations:
+    nginx.org/client-max-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: rabbitmq-prom.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rabbitmq
+                port:
+                  number: 15672

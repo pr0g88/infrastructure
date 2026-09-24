@@ -1,0 +1,125 @@
+# Инфраструктурный пайплайн для RabbitMQ Cluster Operator. Живёт отдельно от
+# релизов приложения (cicd) — джобы преимущественно ручные (when: manual),
+# т.к. инфраструктурные изменения должны быть осознанным действием, а не
+# побочным эффектом обычного push.
+#
+# Креды администратора RabbitMQ берём не из values/env, а из Vault (KV v2,
+# AppRole) и кладём в Kubernetes Secret, на который смотрит RabbitmqCluster
+# через spec.secretBackend.externalSecret.
+#
+# AppRole для sync-secret-* нужен read на:
+#   path "kv/data/pizzashop/dev/infrastructure"     { capabilities = ["read"] }
+#   path "kv/data/pizzashop/staging/infrastructure" { capabilities = ["read"] }
+
+stages:
+  - install     # установка самого оператора (редко, руками)
+  - secrets     # синхронизация Vault -> Kubernetes Secret
+  - deploy      # применение RabbitmqCluster CR + Ingress
+
+variables:
+  # Версия оператора зафиксирована явно для воспроизводимости.
+  # Актуальные релизы: https://github.com/rabbitmq/cluster-operator/releases
+  RABBITMQ_OPERATOR_VERSION: "v2.20.1"
+  RABBITMQ_OPERATOR_MANIFEST_URL: "https://github.com/rabbitmq/cluster-operator/releases/download/${RABBITMQ_OPERATOR_VERSION}/cluster-operator.yml"
+
+
+# --- install: RabbitMQ Cluster Operator (кластерный ресурс, ставим руками) ---
+install-operator:
+  stage: install
+  image: ${INFRA_REGISTRY}/infra/helm-kubectl:4.2.3
+  tags:
+    - kubernetes
+  script:
+    - echo "📦 Устанавливаем RabbitMQ Cluster Operator ${RABBITMQ_OPERATOR_VERSION}"
+    - kubectl apply -f "${RABBITMQ_OPERATOR_MANIFEST_URL}"
+    - kubectl -n rabbitmq-system rollout status deployment/rabbitmq-cluster-operator --timeout=120s
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+
+# --- secrets: читаем credentials из Vault (KV v2, AppRole) -> Kubernetes Secret ---
+.sync-secret-template: &sync-secret-template
+  stage: secrets
+  image: alpine:3.20
+  tags:
+    - kubernetes
+  before_script:
+    - apk add --no-cache curl jq kubectl
+  script:
+    - sh scripts/vault-fetch-secret.sh
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - rabbitmq/**/*
+      when: on_success
+
+sync-secret-dev:
+  <<: *sync-secret-template
+  resource_group: rabbitmq-dev
+  variables:
+    NAMESPACE: "pizzashop-dev"
+    VAULT_KV_PATH: "pizzashop/dev/infrastructure"
+    K8S_SECRET_NAME: "rabbitmq-default-user-external"
+
+sync-secret-staging:
+  <<: *sync-secret-template
+  resource_group: rabbitmq-staging
+  variables:
+    NAMESPACE: "pizzashop-staging"
+    VAULT_KV_PATH: "pizzashop/staging/infrastructure"
+    K8S_SECRET_NAME: "rabbitmq-default-user-external"
+
+
+# --- deploy: применяем RabbitmqCluster CR + Ingress ---
+.deploy-template: &deploy-template
+  stage: deploy
+  image: ${INFRA_REGISTRY}/infra/helm-kubectl:4.2.3
+  tags:
+    - kubernetes
+  script:
+    - |
+      echo "🚀 Применяем RabbitmqCluster CR в ns ${NAMESPACE}"
+      kubectl apply -f ${MANIFEST_DIR}/rabbitmqcluster.yaml
+      kubectl apply -f ${MANIFEST_DIR}/ingress.yaml
+      echo "⏳ Ждём готовности кластера..."
+      kubectl wait --for=condition=AllReplicasReady rabbitmqcluster/rabbitmq -n ${NAMESPACE} --timeout=180s
+      kubectl get rabbitmqcluster,pods,svc -n ${NAMESPACE} -l app.kubernetes.io/name=rabbitmq
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - rabbitmq/**/*
+      when: on_success
+
+deploy-rabbitmq-dev:
+  <<: *deploy-template
+  resource_group: rabbitmq-dev
+  needs: ["sync-secret-dev"]
+  environment:
+    name: dev
+  variables:
+    NAMESPACE: "pizzashop-dev"
+    MANIFEST_DIR: "rabbitmq/dev"
+
+deploy-rabbitmq-staging:
+  <<: *deploy-template
+  resource_group: rabbitmq-staging
+  needs: ["sync-secret-staging"]
+  environment:
+    name: staging
+  variables:
+    NAMESPACE: "pizzashop-staging"
+    MANIFEST_DIR: "rabbitmq/staging"
+
+# prom — подготовлено (манифесты в rabbitmq/prom/), но не включено: нет
+# sync-secret-prom и VAULT_KV_PATH под него. Раскомментировать, когда
+# понадобится третье окружение.
+# deploy-rabbitmq-prom:
+#   <<: *deploy-template
+#   resource_group: rabbitmq-prom
+#   needs: ["sync-secret-prom"]
+#   environment:
+#     name: prom
+#   variables:
+#     NAMESPACE: "pizzashop-prom"
+#     MANIFEST_DIR: "rabbitmq/prom"
